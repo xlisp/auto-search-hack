@@ -1,0 +1,17 @@
+{"kind": "url", "url": "http://127.0.0.1:5050", "source": "examples/flask-api-project/README.md:10"}
+{"kind": "doc_pointer", "path": "examples/flask-api-project/README.md", "note": "review for endpoint hints"}
+{"kind": "route", "framework": "fastapi", "method": "GET", "path": "/health", "source": "examples/flask-api-project/app.py:63"}
+{"kind": "route", "framework": "fastapi", "method": "GET", "path": "/openapi.json", "source": "examples/flask-api-project/app.py:68"}
+{"kind": "route", "framework": "fastapi", "method": "POST", "path": "/api/login", "source": "examples/flask-api-project/app.py:86"}
+{"kind": "route", "framework": "fastapi", "method": "GET", "path": "/api/me", "source": "examples/flask-api-project/app.py:96"}
+{"kind": "route", "framework": "fastapi", "method": "GET", "path": "/api/users", "source": "examples/flask-api-project/app.py:102"}
+{"kind": "route", "framework": "fastapi", "method": "GET", "path": "/api/posts", "source": "examples/flask-api-project/app.py:108"}
+{"kind": "route", "framework": "fastapi", "method": "GET", "path": "/api/posts/<int:pid>", "source": "examples/flask-api-project/app.py:114"}
+{"kind": "route", "framework": "fastapi", "method": "GET", "path": "/admin/users", "source": "examples/flask-api-project/app.py:123"}
+{"kind": "route", "framework": "fastapi", "method": "GET", "path": "/admin/secret", "source": "examples/flask-api-project/app.py:132"}
+{"kind": "url", "url": "http://localhost:5050", "source": "examples/flask-api-project/app.py:73"}
+{"kind": "url", "url": "http://127.0.0.1:5050/api/login", "source": "examples/flask-api-project/sample-run/report.md:18"}
+{"kind": "url", "url": "http://127.0.0.1:5050/admin/users", "source": "examples/flask-api-project/sample-run/report.md:19"}
+{"kind": "url", "url": "http://127.0.0.1:5050/api/login", "source": "examples/flask-api-project/sample-run/report.md:20"}
+{"kind": "url", "url": "http://localhost:5050", "source": "examples/flask-api-project/sample-run/report.md:41"}
+{"kind": "doc_pointer", "path": "examples/flask-api-project/sample-run/README.md", "note": "review for endpoint hints"}
