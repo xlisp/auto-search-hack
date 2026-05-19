@@ -1,0 +1,7 @@
+alice:wrong
+alice:hunter2
+alice:wonderland
+bob:nope
+bob:builder42
+admin:password
+admin:admin

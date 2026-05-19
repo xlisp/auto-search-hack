@@ -1,0 +1,8 @@
+{"id": "t_001", "url": "http://127.0.0.1:5050/admin/secret", "method": "GET", "status": "pending", "priority": 10, "discovered_via": "openapi"}
+{"id": "t_002", "url": "http://127.0.0.1:5050/admin/users", "method": "GET", "status": "pending", "priority": 10, "discovered_via": "openapi"}
+{"id": "t_003", "url": "http://127.0.0.1:5050/api/login", "method": "POST", "status": "pending", "priority": 10, "discovered_via": "openapi"}
+{"id": "t_004", "url": "http://127.0.0.1:5050/api/me", "method": "GET", "status": "pending", "priority": 10, "discovered_via": "openapi"}
+{"id": "t_005", "url": "http://127.0.0.1:5050/api/posts", "method": "GET", "status": "pending", "priority": 10, "discovered_via": "openapi"}
+{"id": "t_006", "url": "http://127.0.0.1:5050/api/posts/{id}", "method": "GET", "status": "pending", "priority": 10, "discovered_via": "openapi"}
+{"id": "t_007", "url": "http://127.0.0.1:5050/api/users", "method": "GET", "status": "pending", "priority": 10, "discovered_via": "openapi"}
+{"id": "t_000", "url": "http://127.0.0.1:5050/health", "method": "GET", "status": "pending", "priority": 10, "discovered_via": "seed"}
