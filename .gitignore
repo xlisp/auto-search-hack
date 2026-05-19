@@ -1,0 +1,9 @@
+scope.yaml
+state/*.jsonl
+state/*.log
+state/creds.txt
+state/report.md
+state/archive-*/
+__pycache__/
+*.pyc
+.venv/
