@@ -1,0 +1,50 @@
+# scope.yaml — REQUIRED. Copy to scope.yaml and edit before running.
+# autohack refuses to operate without a valid scope file.
+
+authorization:
+  # One of: ctf | bug_bounty | client_pentest | own_system
+  type: own_system
+  # Free text: program URL, SOW id, CTF name, or "local lab: dvwa"
+  reference: "local lab: juice-shop docker"
+  signed_by: "you@example.com"
+  expires: 2026-12-31
+
+targets:
+  allow:
+    - host: localhost
+      ports: [3000]
+      paths: ["/*"]
+    # - host: api.example.com
+    #   ports: [443]
+    #   paths: ["/v1/*", "/v2/public/*"]
+  deny:
+    # Always deny destructive admin / billing surfaces by default
+    - host: localhost
+      paths: ["/admin/*", "/billing/*", "/internal/*"]
+
+rate_limits:
+  requests_per_second: 2
+  max_concurrent: 1
+  # On 429: backoff seconds before next request (one tolerance, then halt)
+  backoff_seconds: 30
+
+credentials:
+  # Path to a file with one cred per line: username:password
+  # autohack tests ONLY these. No built-in wordlist against real systems.
+  source: state/creds.txt
+  max_attempts_per_account: 5
+
+budget:
+  max_findings: 200
+  max_runtime_minutes: 90
+  max_requests: 5000
+
+# Optional: local repos / docs to grep for endpoint hints, swagger files, etc.
+# autohack will read these read-only when seeding targets.
+context_repos:
+  # - /Users/you/projects/target-service
+  # - /Users/you/projects/target-service-docs
+
+# Optional: aggressive mode is a no-op unless authorization.type is `ctf` or `own_system`.
+# Even then, it only enables default endpoint wordlists — never default password lists.
+aggressive: false
