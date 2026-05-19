@@ -43,6 +43,7 @@ tools/
   auth.py                 # JWT / cookie / 401 challenge 被动分析
   creds.py                # 凭证测试，三种模式：pairs | combo | common-passwords
   replay.py               # 用捕获到的 JWT 在所有 endpoint 上回放（破坏认证检测）
+  harvest.py              # token 能力地图 —— schema + 样本数据 + curl/python 即用片段
   wordlists/
     api-paths.txt         # endpoint 默认字典
     common-usernames.txt  # 仅 own_system / ctf 可用（或 aggressive_credentials）
@@ -52,7 +53,9 @@ state/                    # 全部 JSONL 流式产出 + report.md
   findings.jsonl          # 结构化发现（最终产物）
   http.log.jsonl          # 每次 HTTP 请求摘要
   creds.log.jsonl         # 凭证尝试（只记 pw_len，永远不存明文密码）
-  tokens/<user>.txt       # 捕获的 JWT（gitignored），供 replay.py 使用
+  tokens/<user>.txt       # 捕获的 JWT（gitignored），供 replay.py / harvest.py 使用
+  capabilities.jsonl      # token → endpoint 能力映射
+  examples/<label>/*.md   # 每个 endpoint 的 curl + python 即用片段
   report.md               # 最终人类可读报告
 examples/flask-api-project/
   app.py                  # 示例：JWT 认证的 Flask 靶机
@@ -138,17 +141,67 @@ context_repos:
 
 ---
 
-## JWT 回放检测破坏的授权（broken auth）
+## 拿到 token 之后：从"能用"到"全摸清"
 
-一旦拿到任意有效 JWT（哪怕是低权限用户），`replay.py` 会：
+**这是这个工具最杀手级的工作流。** 传统方法登入一个 web 系统后，你需要手动挨个测试
+哪些 API 可用、每个返回什么数据、参数怎么传 —— 一个有 80 个 endpoint 的系统通常
+要花一周时间。有了这套工具，10 分钟搞定。
 
-1. 读取 `state/tokens/<user>.txt`
-2. 把这个 token 用 `Authorization: Bearer ...` 拍到 `state/targets.jsonl` 里所有
-   GET endpoint 上
-3. 任何 200 即记录为 `auth_replay` finding；命中 `/admin/*` / `/internal/*` /
-   `/billing/*` → **high 严重度**（垂直越权候选）
+### 第一步：`replay.py` —— 快速边界判定
 
-这是发现"前端鉴权后端不校验"类问题最快的方法之一。
+```bash
+python3 tools/replay.py --token-file state/tokens/alice.txt \
+    --targets state/targets.jsonl --label alice_user
+```
+
+把 token 用 `Authorization: Bearer ...` 拍到所有已知 GET endpoint 上。
+- 200 → 这个 token 能访问
+- 403 → 认证通过但授权失败（边界正确）
+- 401 → token 失效
+- 命中 `/admin/*` / `/internal/*` / `/billing/*` 还返 200 → **high 严重度**（垂直越权候选）
+
+### 第二步：`harvest.py` —— **token 能力地图**
+
+```bash
+python3 tools/harvest.py --token-file state/tokens/alice.txt \
+    --targets state/targets.jsonl --label alice_user --max-ids 3
+```
+
+对**每个**可访问的 endpoint：
+
+1. 真正调用并抓取响应
+2. 提取 schema 草图：`{users: array<{id: int, username: string}>}`
+3. 走响应体里的 ID 字段（`id` / `uuid` / `slug` / `username` / `name`），把
+   `/api/posts/{id}` 这类参数化路径自动展开为 `/api/posts/1`, `/api/posts/2`, ...
+4. 在 `state/examples/<label>/<endpoint>.md` 生成**复制即用的 curl + python 片段**
+5. 在 `state/capabilities.jsonl` 写一条结构化记录
+
+### 第三步：直接读 `state/examples/<label>/`
+
+```markdown
+# GET http://x/admin/users
+
+*Token label:* `admin_jwt`  *Response code:* `200`
+
+## Schema sketch
+{users: array<{id: int, role: string, username: string}>}
+
+## Sample response (truncated)
+{"users":[{"id":1,"role":"user","username":"alice"}, ...]}
+
+## Reproduce — curl
+TOKEN="$(cat state/tokens/admin.txt)"
+curl -H "Authorization: Bearer $TOKEN" 'http://x/admin/users'
+
+## Reproduce — python
+import requests
+token = open("state/tokens/admin.txt").read().strip()
+r = requests.get('http://x/admin/users', headers={'Authorization': f'Bearer {token}'})
+print(r.json())
+```
+
+cat 任意一个文件 → 拷到 notebook 或终端 → 立刻能用。**这就是从"我登入了"到"我把
+整个可达 API 全部摸清楚 + 拿到样本数据 + 拿到调用模板"的自动化。**
 
 ---
 
@@ -185,6 +238,7 @@ context_repos:
 | `tools/auth.py {jwt\|cookie\|challenge} ARG` | 被动认证分析 | `python3 tools/auth.py jwt eyJhbGc...` |
 | `tools/creds.py URL --user-field u --pass-field p [模式]` | 凭证测试 | `python3 tools/creds.py https://api.x/login --user-field email --pass-field pwd` |
 | `tools/replay.py --token-file TOK --targets T --label L` | JWT 回放找破坏的授权 | `python3 tools/replay.py --token-file state/tokens/alice.txt --targets state/targets.jsonl --label alice_user` |
+| `tools/harvest.py --token-file TOK --targets T --label L [--max-ids N]` | **token 能力地图** —— schema + sample + curl/py 片段 | `python3 tools/harvest.py --token-file state/tokens/admin.txt --targets state/targets.jsonl --label admin_jwt` |
 
 ---
 

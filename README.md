@@ -39,6 +39,7 @@ tools/
   auth.py                 # Passive JWT / cookie / 401-challenge analysis
   creds.py                # Credential tester: pairs | combo | common-passwords modes
   replay.py               # Replay captured JWT against endpoints (broken-auth detection)
+  harvest.py              # Token capability map — schema + sample data + curl/python snippets
   wordlists/
     api-paths.txt         # Default endpoint wordlist
     common-usernames.txt  # Only used on own_system / ctf (or aggressive_credentials)
@@ -48,7 +49,9 @@ state/                    # All output here, append-only JSONL + report.md
   findings.jsonl          # Structured findings (the product)
   http.log.jsonl          # Every HTTP request summary
   creds.log.jsonl         # Credential attempts (pw_len only — passwords NEVER stored)
-  tokens/<user>.txt       # Captured JWTs (gitignored) for replay.py
+  tokens/<user>.txt       # Captured JWTs (gitignored) for replay.py / harvest.py
+  capabilities.jsonl      # Token → endpoint capability map
+  examples/<label>/*.md   # Ready-to-paste curl + python snippets per endpoint
   report.md               # Final human-readable report
 examples/flask-api-project/
   app.py                  # Demo JWT-authenticated Flask target
@@ -82,9 +85,34 @@ Claude will:
 3. Seed network targets from `scope.yaml#targets.allow`.
 4. Loop: pick target → run appropriate tool → write findings → enqueue children.
 5. When `creds.py` finds a valid login and captures a JWT, **automatically replay** it
-   against all known endpoints to find broken-auth surfaces.
+   against all known endpoints to find broken-auth surfaces, then **harvest** the
+   full capability map: each accessible endpoint gets a schema sketch, walked IDs,
+   and a copy-paste curl/python snippet under `state/examples/<label>/`.
 6. Stop on queue-empty, budget, 429, or your interrupt.
 7. Write `state/report.md`.
+
+## "I just got a token — what can it do?" workflow
+
+This is the workflow that replaces hours of manual API exploration. After you
+(or `creds.py`) capture a token:
+
+```bash
+# 1. Replay quickly says "200 here, 403 there"
+python3 tools/replay.py --token-file state/tokens/alice.txt \
+    --targets state/targets.jsonl --label alice_user
+
+# 2. Harvest pulls actual data + builds ready-to-paste snippets
+python3 tools/harvest.py --token-file state/tokens/alice.txt \
+    --targets state/targets.jsonl --label alice_user --max-ids 3
+
+# 3. Read what came back
+cat state/examples/alice_user/api_users.md
+```
+
+Each `state/examples/<label>/<slug>.md` contains the schema, a truncated sample
+response, and curl + python snippets — copy any one, paste into a terminal /
+notebook, and you're calling the API. For a system with 80 endpoints, this turns
+"a week of discovery" into "10 minutes of running the loop, then reading".
 
 ## Recon-first workflow (the "footprint collector")
 

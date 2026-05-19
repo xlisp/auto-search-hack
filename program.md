@@ -92,6 +92,7 @@ non-zero with `OUT_OF_SCOPE` or `BUDGET_EXCEEDED`, you stop and report — never
 |---------------------------------------------------|--------------------------------------------------------|
 | `tools/creds.py ENDPOINT --user-field U --pass-field P [mode flags]` | Three modes: `pairs` (default, reads `credentials.source`), `combo` (`--user-list × --pass-list`), `common` (`--common-passwords` + users). Combo and common require `own_system`/`ctf` OR `aggressive_credentials: true` in scope.yaml. Captures tokens to `state/tokens/<user>.txt` when `--capture-token-path` is given. Passwords NEVER stored — only `pw_len`. |
 | `tools/replay.py --token-file TOK --targets state/targets.jsonl --label LBL` | Replays a captured JWT against discovered endpoints. 200 on a sensitive path = vertical privilege escalation finding. |
+| `tools/harvest.py --token-file TOK --targets T --label LBL [--max-ids N]` | **Token capability map.** For each accessible endpoint, extracts a schema sketch, walks path-param IDs from prior response bodies, generates a copy-paste curl + python snippet to `state/examples/<label>/`. Replaces hours of manual API exploration after auth. |
 
 You may also use `Read`, `Edit`, `Bash` for grep/jq style local analysis on state files and
 local project code referenced in `scope.yaml#context_repos`. You may NOT write new tool scripts
@@ -115,6 +116,13 @@ All under `state/`. Create on first use. Treat as append-only logs (never rewrit
 - `state/http.log.jsonl` — every HTTP request/response summary (auto-written by http.py).
 - `state/creds.log.jsonl` — every credential attempt + result (auto-written by creds.py).
 - `state/run.log` — human-readable loop log; one line per tick.
+- `state/capabilities.jsonl` — token capability map. One row per (token_label, url) probe:
+  ```json
+  {"label":"alice_user","url":"http://x/api/users","code":200,
+   "schema":"{users: array<{id:int,username:string}>}","ids_extracted":["1","2"]}
+  ```
+- `state/examples/<label>/<slug>.md` — ready-to-use curl + python snippets per
+  successful endpoint call. The user can `cat` any one of these and paste it.
 
 Findings must NEVER contain raw passwords. Reference them by `cred_id` from creds.log.
 
@@ -162,7 +170,7 @@ typically uncovers more API surface in 10 seconds than discovery does in 10 minu
 - **No targets yet** → seed from `scope.yaml#targets.allow` → run `docs.py`, then `graphql.py`.
 - **Target is a base URL with no children** → `discover.py`; if HTML-heavy, also `spider.py`.
 - **Target returned 401/403** → `auth.py challenge` on response headers → if auth model is "bearer token" and creds are available → `creds.py` (pairs mode first).
-- **Got a working JWT** → save via `--capture-token-path` → run `replay.py --token-file ... --targets state/targets.jsonl --label <user>_<role>` against all known protected endpoints. 200 on a `/admin/*` or `/internal/*` path = high-severity broken-auth finding.
+- **Got a working JWT** → save via `--capture-token-path` → first run `replay.py` against all known protected endpoints for the quick 200/403 boundary check (high-severity finding if a `/admin/*` or `/internal/*` returns 200 for a non-admin token), then run `harvest.py` to extract the **full capability map** for that token — every accessible endpoint gets a schema sketch, every list response has its IDs walked into the parametric children, every successful call gets a curl + python snippet written to `state/examples/<label>/`. This is where "I have a token" becomes "I have the entire reachable API mapped, sampled, and ready to call".
 - **Target returned 200 + JSON** → record schema as finding, enqueue linked URLs/IDs found in body (IDOR probes are passive: only fetch IDs the API itself revealed).
 - **Target returned 5xx** → record as `vuln_signal:server_error`, do NOT retry to amplify.
 
