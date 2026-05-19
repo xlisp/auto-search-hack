@@ -43,7 +43,8 @@ TEXT_EXTS = {".py", ".js", ".ts", ".tsx", ".jsx", ".go", ".rb", ".java", ".kt",
 ROUTE_PATTERNS = [
     ("flask",   re.compile(r"""@\s*\w+\.route\(\s*['"]([^'"]+)['"](?:[^)]*methods\s*=\s*\[([^\]]+)\])?""")),
     ("fastapi", re.compile(r"""@\s*\w+\.(get|post|put|patch|delete|head|options)\(\s*['"]([^'"]+)['"]""", re.I)),
-    ("express", re.compile(r"""\b(?:app|router|server)\.(get|post|put|patch|delete|head|all|use)\s*\(\s*['"`]([^'"`]+)['"`]""", re.I)),
+    # Express: must NOT be preceded by '@' (which would make it a Flask/FastAPI decorator)
+    ("express", re.compile(r"""(?<!@)(?<!\w)(?:app|router|server)\.(get|post|put|patch|delete|head|all|use)\s*\(\s*['"`]([^'"`]+)['"`]""", re.I)),
     ("django",  re.compile(r"""\b(?:path|re_path)\(\s*['"r]+([^'")]+)['"]""")),
     ("rails",   re.compile(r"""^\s*(get|post|put|patch|delete|match)\s+['"]([^'"]+)['"]""", re.M | re.I)),
     ("spring",  re.compile(r"""@\s*(Get|Post|Put|Patch|Delete|Request)Mapping\(\s*(?:value\s*=\s*)?['"]([^'"]+)['"]""")),

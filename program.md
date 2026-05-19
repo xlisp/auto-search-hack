@@ -1,7 +1,20 @@
-# autohack — autonomous authorized-scope API discovery & testing
+# autohack — autonomous recon & authorized-scope API testing
 
 You are running an **authorized** security assessment. This file is your only mission spec.
 Read it top-to-bottom before any action. Treat every section as a hard rule.
+
+**What this tool primarily is:** a powerful API + footprint **collector**. When you point
+it at a new system (new job, new client, new CTF box, new bounty target), it should give
+you, fast and structured, the answers to:
+
+- What endpoints does this system expose? (static + dynamic discovery)
+- What does the auth model look like? (challenge headers, token shape, claims)
+- Which of the credentials I was given actually work? (and what do they unlock?)
+- Where are the boundaries — what's gated, what isn't, what's misconfigured?
+
+Hacking is the secondary outcome of doing recon thoroughly. The loop's job is to *collect
+and classify* until the picture is complete; exploitation only happens within explicit
+authorization and rules-of-engagement.
 
 ---
 
@@ -48,16 +61,37 @@ You are NOT a "break in anywhere" tool. You don't:
 
 ## 2. Tools (fixed, in `tools/`)
 
-All tools auto-invoke `scope_check.py` before any request. If a tool exits non-zero with
-`OUT_OF_SCOPE` or `BUDGET_EXCEEDED`, you stop and report — never bypass.
+All HTTP-touching tools auto-invoke `scope_check.py` before any request. If a tool exits
+non-zero with `OUT_OF_SCOPE` or `BUDGET_EXCEEDED`, you stop and report — never bypass.
 
-| Tool                          | Purpose                                                              |
-|-------------------------------|----------------------------------------------------------------------|
-| `tools/http.py URL [opts]`    | Single HTTP request. Rate-limited. Appends to `state/http.log.jsonl`.|
-| `tools/discover.py BASE`      | Enumerate endpoints (wordlist + spider). Writes targets.            |
-| `tools/docs.py BASE`          | Fetch swagger/openapi/robots/sitemap. Parses endpoint list.         |
-| `tools/auth.py TOKEN`         | Decode JWT, inspect cookies, infer session model.                    |
-| `tools/creds.py ENDPOINT`     | Test credentials from scope-declared file. Rate-limited per-account.|
+**Recon (network-free, fast — run first):**
+
+| Tool                       | Purpose                                                                |
+|----------------------------|------------------------------------------------------------------------|
+| `tools/recon.py [PATHS]`   | Static analysis of `context_repos`: extracts routes (Flask/FastAPI/Express/Django/Rails/Spring/.proto), URLs, doc files, and **names of env keys that look like secrets** (value never read). Pure local — no network. |
+
+**Discovery (network, scope-gated):**
+
+| Tool                        | Purpose                                                              |
+|-----------------------------|----------------------------------------------------------------------|
+| `tools/docs.py BASE`        | Probes `/openapi.json` `/swagger*` `/robots.txt` `/sitemap.xml` `/.well-known/*` and parses any spec found into endpoint candidates. |
+| `tools/discover.py BASE`    | Wordlist enumeration. Uses `tools/wordlists/api-paths.txt` by default; supply `--wordlist FILE` for engagement-specific lists. |
+| `tools/spider.py URL`       | Fetches a page, extracts URLs from anchors / forms / fetch() / axios() / common JS path patterns. Out-of-scope URLs emitted as `oos_sighting`. |
+| `tools/graphql.py BASE`     | If GraphQL is present (common paths probed), runs introspection query and enumerates operations. |
+
+**Probing:**
+
+| Tool                                                  | Purpose                                                |
+|-------------------------------------------------------|--------------------------------------------------------|
+| `tools/http.py URL [opts]`                            | Single HTTP request. Rate-limited. Appends to `state/http.log.jsonl`. Destructive methods (DELETE/PUT/PATCH/POST) require `--confirm-destructive` and §6 user-confirm. |
+| `tools/auth.py {jwt\|cookie\|challenge} ARG`           | Passive: JWT decode + flag (alg=none, expired, long lifetime), cookie inspection, 401-challenge classifier. |
+
+**Credentials (scope + auth-type gated):**
+
+| Tool                                              | Purpose                                                |
+|---------------------------------------------------|--------------------------------------------------------|
+| `tools/creds.py ENDPOINT --user-field U --pass-field P [mode flags]` | Three modes: `pairs` (default, reads `credentials.source`), `combo` (`--user-list × --pass-list`), `common` (`--common-passwords` + users). Combo and common require `own_system`/`ctf` OR `aggressive_credentials: true` in scope.yaml. Captures tokens to `state/tokens/<user>.txt` when `--capture-token-path` is given. Passwords NEVER stored — only `pw_len`. |
+| `tools/replay.py --token-file TOK --targets state/targets.jsonl --label LBL` | Replays a captured JWT against discovered endpoints. 200 on a sensitive path = vertical privilege escalation finding. |
 
 You may also use `Read`, `Edit`, `Bash` for grep/jq style local analysis on state files and
 local project code referenced in `scope.yaml#context_repos`. You may NOT write new tool scripts
@@ -113,11 +147,22 @@ while True:
     # 4g. Log tick line to run.log
 ```
 
-### Action selection heuristic
+### Phase 0 — Static recon (run FIRST, before any network)
 
-- **No targets yet** → seed from `scope.yaml#targets.allow` → run `docs.py` on each base.
-- **Target is a base URL with no children** → `discover.py`.
-- **Target returned 401/403** → `auth.py` on observed challenge → if auth model known and creds available → `creds.py`.
+If `scope.yaml#context_repos` is non-empty, run `tools/recon.py` before anything else.
+Each route record becomes a candidate target (still scope-gated when enqueued). Each
+`secret_hint` becomes an `info` finding pointing at `file:line`. Each `doc_pointer` is
+worth a Read before discovery — local docs often spell out the whole API for free.
+
+This phase is the "footprint collector" — on a real engagement with code access, it
+typically uncovers more API surface in 10 seconds than discovery does in 10 minutes.
+
+### Action selection heuristic (Phase 1+ — network)
+
+- **No targets yet** → seed from `scope.yaml#targets.allow` → run `docs.py`, then `graphql.py`.
+- **Target is a base URL with no children** → `discover.py`; if HTML-heavy, also `spider.py`.
+- **Target returned 401/403** → `auth.py challenge` on response headers → if auth model is "bearer token" and creds are available → `creds.py` (pairs mode first).
+- **Got a working JWT** → save via `--capture-token-path` → run `replay.py --token-file ... --targets state/targets.jsonl --label <user>_<role>` against all known protected endpoints. 200 on a `/admin/*` or `/internal/*` path = high-severity broken-auth finding.
 - **Target returned 200 + JSON** → record schema as finding, enqueue linked URLs/IDs found in body (IDOR probes are passive: only fetch IDs the API itself revealed).
 - **Target returned 5xx** → record as `vuln_signal:server_error`, do NOT retry to amplify.
 
@@ -162,10 +207,11 @@ When the user says "start an autohack run":
 
 1. Run authorization gate (§0).
 2. If `state/targets.jsonl` exists and has pending items → ask user: resume or fresh? On fresh, archive `state/` to `state/archive-<ts>/`.
-3. Seed initial targets from `scope.yaml#targets.allow`.
-4. Begin loop (§4).
-5. After each tick, print a one-line status: `tick=N target=<url> action=<a> result=<code> findings+=<k> queue=<m>`.
-6. On stop, write `state/report.md` and print its path.
+3. **Run Phase 0 static recon** (`tools/recon.py`) if `context_repos` is set. Enqueue discovered routes as targets, write secret hints / doc pointers as findings.
+4. Seed initial network targets from `scope.yaml#targets.allow`.
+5. Begin loop (§4). For each newly-issued JWT (creds.py success), schedule a `replay.py` pass against `state/targets.jsonl`.
+6. After each tick, print a one-line status: `tick=N target=<url> action=<a> result=<code> findings+=<k> queue=<m>`.
+7. On stop, write `state/report.md` and print its path.
 
 Stay in this loop. Do not exit early on minor errors — log them and continue. Only the
 stop conditions in §4a + §6 halt the run.

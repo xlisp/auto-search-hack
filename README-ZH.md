@@ -1,42 +1,64 @@
 # auto-search-hack
 
-为 Claude Code 设计的**自主、授权范围内**的 API 发现与安全测试闭环框架。
+为 Claude Code 设计的**自主、授权范围内**的 **系统侦察 + 安全测试** 闭环框架。
 
-> ⚠️ **仅限授权使用。** 适用场景：bug bounty 公开授权范围、有 SOW/Rules of Engagement 的客户渗透测试、CTF 比赛环境、你自己的系统或本地靶机（DVWA / Juice Shop / HackTheBox 本地实例等）。
->
-> 没有有效的 `scope.yaml`，所有工具都会拒绝运行。
+> 这个工具最核心的定位是 **"API + 手脚收集器"**：丢给它一个新系统（新工作、新客户、
+> 新 CTF box、新 bounty 目标），它在几分钟内给你一份结构化的图景 —— 这个系统暴露
+> 了哪些 endpoint、认证模型长什么样、你手上的哪些账号能用、特权边界在哪里漏了。
+> "渗透"是把侦察做扎实后的副产物。
+
+> ⚠️ **仅限授权使用。** Bug bounty 公开授权范围、有 SOW 的客户渗透、CTF 比赛、
+> 你自己的系统或本地靶机。没有有效的 `scope.yaml`，所有工具都会拒绝运行。
 
 ---
 
-## 设计思路
+## 为什么需要这个
 
-一个由 Claude Code 驱动的"自主黑客"闭环：
+接手一个新项目、入职新公司、开一个 CTF 题、看一个新 bounty target —— 慢的部分
+永远是"逆向理解这个系统"：有哪些 endpoint，认证怎么走，给我的测试账号到底能解锁
+什么。这个仓库把这个循环自动化了：
 
-- **`program.md`** —— agent 的"skill"（指令集），Claude 读完它就知道整个状态机怎么跑
-- **少量固定工具**（`tools/`） —— 薄包装的 Python 脚本，每个工具入口都强制走授权门
-- **一个自主循环** —— program.md 第 4 节定义的状态机，Claude 在一个 session 里反复 tick 直到停止条件命中
-- **结构化产出**（`state/`） —— append-only JSONL 流，既是 agent 的记忆，也是最终报告
+- 一个常驻 **skill 规范**（`program.md`）告诉 Claude Code 怎么做事
+- `tools/` 里一组**固定的薄工具**（每个都强制走授权门）做实际工作
+- 一个 **JSONL 状态目录** 既是 agent 的记忆，也是审计追踪
+- Claude 按 `program.md` 描述的状态机循环，直到收敛或预算耗尽
+
+你只需要在仓库里说"看一下 program.md 启动一个 autohack run"，它自己跑下去。
+
+---
+
+## 架构
 
 ```
-auto-search-hack/
-├── program.md            # Claude 的"游戏规则"，读完即按状态机循环
-├── README.md / README-ZH.md
-├── scope.example.yaml    # 授权范围模板（用户拷贝为 scope.yaml）
-├── .gitignore            # scope.yaml 与 state/ 中敏感产出默认不入库
-├── tools/
-│   ├── scope_check.py    # 授权门 + 预算检查（其他所有工具的前置闸）
-│   ├── http.py           # 限速、全量记日志的 HTTP；destructive method 需显式确认
-│   ├── docs.py           # 探测并解析 /openapi /swagger /robots /sitemap /.well-known
-│   ├── discover.py       # 字典枚举（bug bounty / 客户渗透必须自带 wordlist）
-│   ├── auth.py           # JWT / cookie / challenge 头的被动分析
-│   └── creds.py          # 凭证测试，仅针对 scope 中指定的凭证文件
-└── state/                # 全部 JSONL 流式产出
-    ├── targets.jsonl     # 工作队列（agent 自维护）
-    ├── findings.jsonl    # 结构化发现（最终产物）
-    ├── http.log.jsonl    # 每次 HTTP 请求摘要（自动写入）
-    ├── creds.log.jsonl   # 每次凭证尝试 + 结果（永不含明文密码）
-    ├── run.log           # tick-by-tick 循环日志
-    └── report.md         # 停止时自动生成的人类可读报告
+program.md                # Claude 的"游戏规则"，读完即按状态机循环
+scope.yaml                # 必需。授权 + 目标 + 预算。.gitignore 中。
+tools/
+  scope_check.py          # 授权 + scope 校验。所有工具的前置闸。
+  http.py                 # 限速 HTTP，全量记日志到 state/http.log.jsonl
+  recon.py                # 静态源码分析（context_repos）——零网络流量！
+  docs.py                 # 探测 /openapi /swagger /robots /sitemap /.well-known
+  discover.py             # 字典枚举（默认用 tools/wordlists/api-paths.txt）
+  spider.py               # HTML/JS endpoint 提取（a/form/fetch/axios）
+  graphql.py              # GraphQL introspection
+  auth.py                 # JWT / cookie / 401 challenge 被动分析
+  creds.py                # 凭证测试，三种模式：pairs | combo | common-passwords
+  replay.py               # 用捕获到的 JWT 在所有 endpoint 上回放（破坏认证检测）
+  wordlists/
+    api-paths.txt         # endpoint 默认字典
+    common-usernames.txt  # 仅 own_system / ctf 可用（或 aggressive_credentials）
+    common-passwords.txt  # 仅 own_system / ctf 可用（或 aggressive_credentials）
+state/                    # 全部 JSONL 流式产出 + report.md
+  targets.jsonl           # 工作队列
+  findings.jsonl          # 结构化发现（最终产物）
+  http.log.jsonl          # 每次 HTTP 请求摘要
+  creds.log.jsonl         # 凭证尝试（只记 pw_len，永远不存明文密码）
+  tokens/<user>.txt       # 捕获的 JWT（gitignored），供 replay.py 使用
+  report.md               # 最终人类可读报告
+examples/flask-api-project/
+  app.py                  # 示例：JWT 认证的 Flask 靶机
+  scope.yaml              # 该靶机对应的 scope 配置
+  creds.txt               # 示例凭证列表
+  sample-run/             # 一次成功运行的基线产物（用于回归对比）
 ```
 
 ---
@@ -44,88 +66,108 @@ auto-search-hack/
 ## 准备工作
 
 ```bash
-# 1. 拷贝并编辑授权范围
 cp scope.example.yaml scope.yaml
-$EDITOR scope.yaml          # 填入 authorization / targets.allow / targets.deny / budget
-
-# 2. 安装唯一运行时依赖
-pip install pyyaml
-
-# 3. 如需做凭证测试：自备凭证清单（user:pass 一行一个）
+$EDITOR scope.yaml          # 填 authorization / targets / budget / context_repos
+pip install pyyaml          # 唯一运行时依赖（flask/pyjwt 只是 demo 需要）
+# 如需凭证测试：
 echo "alice:hunter2" > state/creds.txt
-echo "bob:correct horse" >> state/creds.txt
-```
-
-`scope.yaml` 的核心字段：
-
-```yaml
-authorization:
-  type: own_system          # ctf | bug_bounty | client_pentest | own_system
-  reference: "本地靶机: juice-shop docker"
-  signed_by: "you@example.com"
-  expires: 2026-12-31       # 过期后框架直接拒绝运行
-
-targets:
-  allow:
-    - host: localhost
-      ports: [3000]
-      paths: ["/*"]
-  deny:                     # 默认拦截高危后台路径
-    - host: localhost
-      paths: ["/admin/*", "/billing/*", "/internal/*"]
-
-rate_limits:
-  requests_per_second: 2
-  max_concurrent: 1
-  backoff_seconds: 30
-
-credentials:
-  source: state/creds.txt
-  max_attempts_per_account: 5
-
-budget:
-  max_findings: 200
-  max_runtime_minutes: 90
-  max_requests: 5000
 ```
 
 ---
 
-## 启动一次 autohack run
+## 启动
 
 在仓库目录里，打开 Claude Code 然后说：
 
 > Hi，看一下 program.md，启动一个 autohack run。
 
-Claude 会自动按 `program.md` 执行：
+Claude 会自动：
 
-1. **授权门**（§0）——校验 `scope.yaml` 存在、type 合法、reference 非空、未过期。任一不满足就直接拒绝。
-2. **种子目标**（§7）——从 `targets.allow` 播种到 `state/targets.jsonl`。
-3. **进入循环**（§4）——每个 tick：
-   - 选最高优先级的 `pending` 目标
-   - 按目标当前状态决定 action（`docs` / `discover` / `auth` / `creds` / 分类）
-   - 跑对应的 tool，解析输出
-   - 新发现的 endpoint 自动入队，深度衰减优先级
-   - 结果写入 `findings.jsonl`，目标标记为 `done`
-4. **停止条件**（§4a/§6）——队列空 / 预算耗尽 / 429 / 连续 5xx / 用户中断。
-5. **写报告** —— `state/report.md`（包含发现汇总、认证模型、凭证矩阵、OOS 旁见、待人工复核项）。
+1. 校验 `scope.yaml`（任何不合法直接拒绝）
+2. **Phase 0 静态侦察** —— 跑 `recon.py` 扫 `context_repos`：从源码里提路由、列出
+   名字像 `*_TOKEN`/`*_SECRET` 的环境变量键（**只读 key 名，永不读 value**）、
+   指向本地 API 文档。这步**零网络流量**，是白嫖的大头
+3. 从 `scope.yaml#targets.allow` 播种网络目标
+4. 进入循环：选目标 → 选 action → 跑 tool → 解析输出 → 入队子目标 → 写 findings
+5. 一旦 `creds.py` 找到有效登录并捕获 JWT，**自动用 `replay.py`** 把这个 token
+   在所有已知 endpoint 上回放，找特权边界漏洞
+6. 在队列空 / 预算耗尽 / 429 / 用户中断时停
+7. 自动写 `state/report.md`
 
 ---
 
-## 安全栏（不可绕过）
+## 侦察优先工作流（"手脚收集器"）
+
+如果你有源码访问权（你自己的系统、公司的、有代码访问权的客户）：
+
+```yaml
+# scope.yaml
+context_repos:
+  - /Users/you/projects/target-service
+  - /Users/you/projects/target-service-docs
+```
+
+`tools/recon.py` 会遍历这些路径并提取：
+
+- **路由**：Flask `@app.route`、FastAPI `@app.get`、Express `app.get(...)`、Django
+  `path(...)`、Rails `routes.rb`、Spring `@GetMapping`、`.proto` 里的 `rpc`
+- **硬编码 URL**：源码/配置里任何 `https?://...`
+- **疑似密钥环境变量名**：匹配 `*_TOKEN|*_SECRET|*_KEY|*_JWT|*_AUTH|*_PASS` 的
+  键名 + `file:line`（**值从不读取或打印**）
+- **本地文档文件**：`openapi.yaml`、`swagger.json`、`*.postman_collection.json`、
+  `API.md`、`README.md` —— 任何描述 API 表面的东西
+
+效果：网络阶段开始前，agent 已经知道这个系统的形状了。生产实战中代码访问权 + recon.py
+通常在 10 秒内能挖出比 10 分钟网络扫描更多的 API 表面。
+
+---
+
+## 凭证测试三种模式
+
+| 模式      | 触发参数                                   | 授权门                                                       |
+|-----------|--------------------------------------------|--------------------------------------------------------------|
+| `pairs`   | 默认 —— 读 `credentials.source`            | 总是允许（你自己给定的 `user:pass` 对）                       |
+| `combo`   | `--user-list F --pass-list F`              | 仅 `own_system` / `ctf` —— 或 `aggressive_credentials: true`  |
+| `common`  | `--common-passwords --users a,b`           | 仅 `own_system` / `ctf` —— 或 `aggressive_credentials: true`  |
+
+捕获 token 用 `--capture-token-path token` 或 `--capture-token-path data.access_token`，
+会自动写到 `state/tokens/<user>.txt`，下一步 `replay.py` 直接 `--token-file` 引用。
+
+内置 wordlist 故意做得很小（冒烟测试级）。真实业务请用 `--wordlist`/`--user-list`/
+`--pass-list` 自带的引擎级字典。
+
+---
+
+## JWT 回放检测破坏的授权（broken auth）
+
+一旦拿到任意有效 JWT（哪怕是低权限用户），`replay.py` 会：
+
+1. 读取 `state/tokens/<user>.txt`
+2. 把这个 token 用 `Authorization: Bearer ...` 拍到 `state/targets.jsonl` 里所有
+   GET endpoint 上
+3. 任何 200 即记录为 `auth_replay` finding；命中 `/admin/*` / `/internal/*` /
+   `/billing/*` → **high 严重度**（垂直越权候选）
+
+这是发现"前端鉴权后端不校验"类问题最快的方法之一。
+
+---
+
+## 不可绕过的安全栏
 
 | 规则 | 实现位置 |
 |------|----------|
-| 所有 HTTP 请求前强制走 `scope_check.py` | `tools/http.py` 启动时 subprocess 调用 |
+| 所有 HTTP 请求前强制走 `scope_check.py` | `tools/http.py` |
 | OOS host / deny path 立即 exit 1 | `tools/scope_check.py` |
 | 授权过期立即 exit 3 | `tools/scope_check.py` |
-| 预算（请求数 / 发现数）耗尽 exit 4 | `tools/scope_check.py` 每次调用都检查 |
-| `DELETE/PUT/PATCH/POST` 需 `--confirm-destructive` + 用户 chat 确认 | `tools/http.py` + `program.md §6` |
+| 预算（请求数 / 发现数）耗尽 exit 4 | `tools/scope_check.py` |
+| `DELETE/PUT/PATCH/POST` 需 `--confirm-destructive` + chat 二次确认 | `tools/http.py` + `program.md §6` |
 | 429 → 整轮停止，不重试放大 | `tools/http.py` 返回 exit 7 |
-| `bug_bounty` / `client_pentest` 拒绝内置 wordlist | `tools/discover.py` |
-| 凭证仅来源 `scope.yaml#credentials.source` | `tools/creds.py` |
-| findings / 日志中永不存明文密码 | `creds.py` 只记 `pw_len` + `cred_id` |
-| 重定向到 OOS host → 记录但绝不跟进 | `program.md §6` + agent 状态机 |
+| `bug_bounty` / `client_pentest` 默认拒绝 combo / common-passwords | `tools/creds.py` |
+| 凭证默认仅来源 `scope.yaml#credentials.source` | `tools/creds.py` |
+| findings / 日志中**永不**存明文密码（只记 `pw_len`） | `creds.py` |
+| 重定向 / spider 到 OOS host → 记录为 `oos_sighting`，绝不跟进 | `spider.py` + agent 状态机 |
+| `recon.py` **只读 env key 名**，永不读 value | `tools/recon.py` |
+| 捕获 token 存 `state/tokens/`，已 gitignore | `creds.py` + `.gitignore` |
 
 ---
 
@@ -133,41 +175,32 @@ Claude 会自动按 `program.md` 执行：
 
 | 工具 | 作用 | 典型调用 |
 |------|------|---------|
+| `tools/recon.py [PATH...]` | 静态分析本地仓库（路由 / URL / 密钥名 / 文档） | `python3 tools/recon.py` |
 | `tools/scope_check.py URL` | 授权 + scope + 预算校验 | 由其他工具自动调用 |
-| `tools/http.py URL [--method M] [--header H] [--data D]` | 限速 HTTP，日志入 `http.log.jsonl` | `python3 tools/http.py https://api.x/v1/me` |
-| `tools/docs.py BASE` | 探测 openapi/swagger/robots/.well-known，解析 endpoint | `python3 tools/docs.py https://api.x` |
-| `tools/discover.py BASE [--wordlist F] [--depth N]` | 字典 endpoint 枚举 | `python3 tools/discover.py https://api.x --wordlist words.txt` |
+| `tools/http.py URL [opts]` | 限速 HTTP，日志入 `http.log.jsonl` | `python3 tools/http.py https://api.x/v1/me` |
+| `tools/docs.py BASE` | 探测 openapi/swagger/robots/.well-known | `python3 tools/docs.py https://api.x` |
+| `tools/discover.py BASE [--wordlist F]` | 字典 endpoint 枚举 | `python3 tools/discover.py https://api.x` |
+| `tools/spider.py URL` | HTML/JS endpoint 提取 | `python3 tools/spider.py https://app.x/` |
+| `tools/graphql.py BASE` | GraphQL introspection | `python3 tools/graphql.py https://api.x` |
 | `tools/auth.py {jwt\|cookie\|challenge} ARG` | 被动认证分析 | `python3 tools/auth.py jwt eyJhbGc...` |
-| `tools/creds.py URL --user-field u --pass-field p` | 凭证测试 | `python3 tools/creds.py https://api.x/login --user-field email --pass-field pwd` |
+| `tools/creds.py URL --user-field u --pass-field p [模式]` | 凭证测试 | `python3 tools/creds.py https://api.x/login --user-field email --pass-field pwd` |
+| `tools/replay.py --token-file TOK --targets T --label L` | JWT 回放找破坏的授权 | `python3 tools/replay.py --token-file state/tokens/alice.txt --targets state/targets.jsonl --label alice_user` |
 
 ---
 
 ## 中断与恢复
 
-`state/` 是 append-only 的——所有 JSONL 文件只追加不重写。
+`state/` 是 append-only —— 所有 JSONL 文件只追加不重写。
 
-- 跑到一半中断（Ctrl+C / 网络断 / 时间不够），直接重新发"启动一个 autohack run"指令即可。
+- 跑到一半中断，直接重新发"启动一个 autohack run"。
 - Claude 会检测 `state/targets.jsonl` 里的 `pending` 项，询问你要**恢复**还是**归档重来**。
 - 归档时旧 state 会被移到 `state/archive-<时间戳>/`。
 
 ---
 
-## 把你已有的项目代码作为线索
-
-如果你正在对一个有源码访问权的目标做评估（自己的系统 / 授权客户的代码），在 `scope.yaml` 中加：
-
-```yaml
-context_repos:
-  - /Users/you/projects/target-service
-  - /Users/you/projects/target-service-docs
-```
-
-Claude 在种子和分析阶段会读这些路径下的 swagger 文件、路由定义、文档，把发现的 endpoint 候选 enqueue 进 `targets.jsonl`（仍然受 scope 校验）。这一步比纯黑盒扫快得多，也是把"递归 hack 所有 API"做扎实的关键。
-
----
-
 ## 一句话总结
 
-**Claude Code + `program.md` + 固定工具 + JSONL 状态 = 一个授权范围内可自主循环、可中断恢复、可审计、可生成结构化报告的渗透测试 agent。**
+**Claude Code + `program.md` + 10 个固定工具 + JSONL 状态 = 一个授权范围内可自主循环、
+可中断恢复、可审计、可生成结构化报告的 API 侦察 + 渗透 agent。**
 
 授权范围之外的事，框架拒绝做；授权范围之内的事，agent 自己跑到收敛。

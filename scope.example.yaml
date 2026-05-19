@@ -30,9 +30,13 @@ rate_limits:
 
 credentials:
   # Path to a file with one cred per line: username:password
-  # autohack tests ONLY these. No built-in wordlist against real systems.
+  # autohack `pairs` mode tests ONLY these.
   source: state/creds.txt
   max_attempts_per_account: 5
+
+# Opt-in to combinatorial / common-password modes for bug_bounty / client_pentest.
+# own_system / ctf already allow these without this flag.
+# aggressive_credentials: false
 
 budget:
   max_findings: 200

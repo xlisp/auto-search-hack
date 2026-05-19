@@ -4,6 +4,7 @@ state/*.log
 state/creds.txt
 state/report.md
 state/archive-*/
+state/tokens/
 __pycache__/
 *.pyc
 .venv/
